@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>誰是倒霉鬼大輪盤</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- 引入 Tailwind CSS 讓頁面更美觀 -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 引入 Winwheel.js 函式庫 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
+    <!-- <script src="https://cdn.jsdelivr.net/npm/winwheel@1.0.1/dist/Winwheel.min.js" integrity="sha256-PpHYiu8r1lI3lrR86U3x9+PJyOhPQWECz6jT9GaCeas=" crossorigin="anonymous"></script> -->
+
+    <script src="./javascript-winwheel-2.8.0/Winwheel.min.js"></script>
+    <style>
+        body {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            font-family: 'Inter', sans-serif;
+            background-color: #f0f4f8;
+            padding: 1rem;
+        }
+
+        #canvas {
+            max-width: 100%;
+            height: auto;
+        }
+    </style>
+</head>
+
+<body class="bg-gray-100">
+
+    <h1 class="text-3xl md:text-4xl font-bold mb-8 text-gray-700 text-center">幸運大輪盤</h1>
+
+    <!-- 輪盤容器 -->
+    <div id="wheel-container" class="relative w-full max-w-lg flex justify-center items-center mb-8">
+        <!-- 讀取中的提示 -->
+        <div id="loading-message" class="text-xl text-gray-600">獎項載入中，請稍候...</div>
+
+        <!-- 輪盤指針 -->
+        <div id="pointer" class="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 z-10 hidden"
+            style="width: 0; height: 0; border-left: 20px solid transparent; border-right: 20px solid transparent; border-top: 40px solid #dc2626;">
+        </div>
+
+        <canvas id='canvas' width='450' height='450' class="hidden">
+            Canvas not supported, use another browser.
+        </canvas>
+    </div>
+
+    <!-- 控制按鈕 -->
+    <div id="controls" class="hidden">
+        <button id="spin_button"
+            class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-lg text-xl shadow-lg transition duration-300 transform hover:scale-105">
+            開始抽獎！
+        </button>
+        <button id="reset_button"
+            class="bg-gray-500 hover:bg-gray-700 text-white font-bold py-3 px-6 rounded-lg text-xl shadow-lg transition duration-300 ml-4 transform hover:scale-105">
+            重設輪盤
+        </button>
+    </div>
+
+    <!-- 結果顯示區域 -->
+    <div id="result_message" class="mt-6 text-2xl font-semibold text-gray-800 h-8 text-center"></div>
+
+    <script>
+        // ====================================================================================================================================================================
+        // 重要設定：請將 'YOUR_GOOGLE_APPS_SCRIPT_URL' 替換成您在步驟二中部署後取得的網頁應用程式網址
+        // ====================================================================================================================================================================
+        // https://script.google.com/macros/library/d/1bpOygc9H82aciDaQ-PX5s1TaEe02cvOQb2XK3THwyZO-ECkx7L1R3weI/1
+
+        const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwczkWXyd2uDPsKRZAxUbiWuxAYN5U5KzXAuJVoFJizLd92RtsVojV2leq4Xj_t5kJrtg/exec';
+
+        let theWheel = null;
+        let wheelSpinning = false;
+        // const audio = new Audio('https://cdn.jsdelivr.net/gh/dougtesting/Sound-Files/tick.mp3');
+
+        // 當頁面載入完成後，執行 loadPrizes 函數
+        document.addEventListener('DOMContentLoaded', loadPrizes);
+
+        /**
+         * 從 Google Apps Script 載入獎項資料
+         */
+        function loadPrizes () {
+            if (SCRIPT_URL === 'YOUR_GOOGLE_APPS_SCRIPT_URL') {
+                showError("錯誤：請務必在 JavaScript 中設定您的 Google Apps Script URL！");
+                return;
+            }
+
+            fetch(SCRIPT_URL) // 預設為 GET 請求
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`網路回應錯誤: ${response.statusText}`);
+                    }
+                    return response.json();
+                })
+                .then(prizes => {
+                    if (prizes.status === 'error') {
+                        throw new Error(`後端錯誤: ${prizes.message}`);
+                    }
+
+
+                    console.log('成功載入獎項:', prizes);
+                    initializeWheel(prizes);
+                })
+                .catch(error => {
+                    console.error('載入獎項失敗:', error);
+                    showError(`獎項載入失敗！請檢查試算表設定或網路連線。<br>(${error.message})`);
+                });
+        }
+
+        /**
+         * 使用從試算表載入的資料來初始化輪盤
+         * @param {Array} prizeSegments - 獎項設定陣列
+         */
+        function initializeWheel (prizeSegments) {
+            // 隱藏讀取訊息，顯示輪盤和按鈕
+            document.getElementById('loading-message').classList.add('hidden');
+            document.getElementById('canvas').classList.remove('hidden');
+            document.getElementById('pointer').classList.remove('hidden');
+            document.getElementById('controls').classList.remove('hidden');
+
+            theWheel = new Winwheel({
+                'numSegments': prizeSegments.length,
+                'outerRadius': 220,
+                'textFontSize': 16,
+                'textFontFamily': 'Arial',
+                'segments': prizeSegments,
+                'animation': {
+                    'type': 'spinToStop',
+                    'duration': 5,
+                    'spins': 10,
+                    'callbackFinished': savePrize,
+                    // 'callbackSound': playSound,
+                    'soundTrigger': 'pin'
+                },
+                'pins': { 'number': prizeSegments.length * 2 }
+            });
+
+            // 綁定按鈕事件
+            document.getElementById('spin_button').addEventListener('click', startSpin);
+            document.getElementById('reset_button').addEventListener('click', resetWheel);
+        }
+
+        function startSpin () {
+            if (!wheelSpinning) {
+                theWheel.startAnimation();
+                wheelSpinning = true;
+                document.getElementById('result_message').innerText = '';
+            }
+        }
+
+        function resetWheel () {
+            if (theWheel) {
+                theWheel.stopAnimation(false);
+                theWheel.rotationAngle = 0;
+                theWheel.draw();
+                wheelSpinning = false;
+                document.getElementById('result_message').innerText = '';
+            }
+        }
+
+        // function playSound () {
+        //     audio.pause();
+        //     audio.currentTime = 0;
+        //     audio.play();
+        // }
+
+        function showError (message) {
+            document.getElementById('loading-message').innerHTML = message;
+            document.getElementById('loading-message').classList.add('text-red-500');
+        }
+
+        /**
+         * 動畫結束後，儲存結果到 Google Sheets
+         * @param {object} indicatedSegment - 抽中的獎項物件
+         */
+        function savePrize (indicatedSegment) {
+            console.warn('savePrize ', indicatedSegment)
+            const prizeWon = indicatedSegment.text;
+            const resultMessage = `恭喜您抽中：${prizeWon}!`;
+            document.getElementById('result_message').innerText = resultMessage;
+
+            const dataToSend = { prize: prizeWon };
+
+            fetch(SCRIPT_URL, {
+                method: 'POST',
+                redirect: "follow",
+                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                body: JSON.stringify(dataToSend)
+            })
+                .then(response => response.json())
+                .then(result => {
+                    console.log('成功儲存至 Google Sheets:', result);
+                })
+                .catch(error => {
+                    console.error('儲存至 Google Sheets 時發生錯誤:', error);
+                    alert('儲存結果失敗，請檢查網路連線或後端設定。');
+                })
+                .finally(() => {
+                    wheelSpinning = false;
+                });
+        }
+    </script>
+
+</body>
+
+</html>
